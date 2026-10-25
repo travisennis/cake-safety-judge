@@ -1,0 +1,9 @@
+{
+  "protocol": "cake-gate/1",
+  "name": "safety",
+  "version": "0.1.0",
+  "phases": ["pre_tool"],
+  "actions": ["bash.exec"],
+  "transports": ["stdio"],
+  "capabilities": ["resolved-models", "shadow", "diagnostic"]
+}

@@ -1,0 +1,37 @@
+#!/bin/sh
+# Check that the gate describes itself and report whether Cake can find it.
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if command -v cake-safety-judge >/dev/null 2>&1; then
+    path=$(command -v cake-safety-judge)
+    echo "binary: $path (on PATH; Cake auto-detection can use it after slice 4)"
+elif [ -x "$root/bin/cake-safety-judge" ]; then
+    path="$root/bin/cake-safety-judge"
+    echo "binary: $path (local build; not on PATH, so Cake cannot auto-detect it)"
+else
+    echo "cake-safety-judge: no binary found" >&2
+    echo "run 'just build' or 'just install'" >&2
+    exit 1
+fi
+
+describe=$("$path" describe)
+printf '%s\n' "$describe"
+
+for expected in \
+    '"protocol":"cake-gate/1"' \
+    '"name":"safety"' \
+    '"actions":["bash.exec"]' \
+    '"transports":["stdio"]'
+do
+    if ! printf '%s' "$describe" | grep -qF "$expected"; then
+        echo "doctor: describe is missing $expected" >&2
+        exit 1
+    fi
+done
+
+if command -v cake >/dev/null 2>&1; then
+    echo "cake: $(command -v cake)"
+    echo "note: Cake reads [gates] from slice 4; auto-detection does not run this gate yet."
+fi
+echo "ok"

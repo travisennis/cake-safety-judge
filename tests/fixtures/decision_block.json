@@ -1,0 +1,13 @@
+{
+  "protocol": "cake-gate/1",
+  "type": "decision",
+  "id": "01J",
+  "decision": "block",
+  "code": "git-force-push",
+  "message": "Use git push --force-with-lease instead.",
+  "confidence": 0.94,
+  "short_circuit": false,
+  "evidence": [
+    {"kind": "attempt", "data": {"model": "judge-model", "attempt": 1, "latency_ms": 1200, "terminal_class": "verdict"}}
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "protocol": "cake-gate/1",
+  "type": "init",
+  "id": "init",
+  "session": {
+    "session_id": "9f1c",
+    "task_id": "4b2e",
+    "invocation_id": "01J",
+    "cwd": "/work/cake"
+  },
+  "config": {"model": "judge", "rubric_file": ".cake/judge-rubric.md"},
+  "models": {
+    "judge": {
+      "provider": "openai",
+      "base_url": "https://api.example.test/v1",
+      "api_type": "chat_completions",
+      "model": "judge-model",
+      "api_key_env": "JUDGE_API_KEY"
+    }
+  },
+  "env": ["JUDGE_API_KEY"]
+}

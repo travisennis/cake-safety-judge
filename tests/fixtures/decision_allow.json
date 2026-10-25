@@ -1,0 +1,8 @@
+{
+  "protocol": "cake-gate/1",
+  "type": "decision",
+  "id": "01J",
+  "decision": "allow",
+  "message": "Read-only status.",
+  "confidence": 0.99
+}

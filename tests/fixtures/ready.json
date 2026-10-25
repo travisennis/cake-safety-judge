@@ -1,0 +1,8 @@
+{
+  "protocol": "cake-gate/1",
+  "type": "ready",
+  "id": "init",
+  "name": "safety",
+  "version": "0.1.0",
+  "warnings": []
+}

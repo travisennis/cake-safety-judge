@@ -1,0 +1,7 @@
+{
+  "protocol": "cake-gate/1",
+  "type": "error",
+  "id": "01J",
+  "class": "timeout",
+  "message": "the upstream judge call exceeded its deadline"
+}

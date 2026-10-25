@@ -1,0 +1,16 @@
+{
+  "protocol": "cake-gate/1",
+  "type": "check",
+  "id": "01J",
+  "phase": "pre_tool",
+  "action": "bash.exec",
+  "input": {
+    "command": "git status --short",
+    "cwd": "/work/cake",
+    "reason": null,
+    "repo_digest": "git repo, branch main",
+    "script_evidence": []
+  },
+  "session": {"session_id": "9f1c", "task_id": "4b2e", "call_id": "call_1", "turn": 3},
+  "options": {"diagnostic": false}
+}
