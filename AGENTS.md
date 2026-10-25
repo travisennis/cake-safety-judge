@@ -12,8 +12,9 @@ transport, strict verdict parsing, bounded recovery, verdict codes, and the
 TypeSafe observation.
 
 Slices 0–1 of the `cake-gate` initiative are merged in Cake. This repository is
-slice 2 and is local-only: there is no remote yet. Do not make Cake changes in
-a task here; the workspace rule is one task in one subdirectory.
+slice 2 and is public at <https://github.com/travisennis/cake-safety-judge>. Do
+not make Cake changes in a task here; the workspace rule is one task in one
+subdirectory.
 
 ## Layout
 

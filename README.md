@@ -8,8 +8,9 @@ cascade.
 
 Status: slice 2 of the `cake-gate` initiative. The gate is built and tested
 offline; it is not yet the default in Cake. Slice 3 runs it in shadow beside
-the in-process judge, and slice 4 makes it the default when installed. This
-repository is local-only: no remote exists yet.
+the in-process judge, and slice 4 makes it the default when installed.
+
+The repository is public at <https://github.com/travisennis/cake-safety-judge>.
 
 ## Why a separate process
 
