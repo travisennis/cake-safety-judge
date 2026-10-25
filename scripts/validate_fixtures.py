@@ -27,21 +27,21 @@ def main() -> int:
         return 0
 
     schema = json.loads(SCHEMA_PATH.read_text())
-    targets = {
-        "describe.json": schema["$defs"]["describe"],
-        "init.json": schema["$defs"]["frame"],
-        "check.json": schema["$defs"]["frame"],
-        "decision_block.json": schema["$defs"]["frame"],
-        "decision_allow.json": schema["$defs"]["frame"],
-        "error.json": schema["$defs"]["frame"],
-        "ready.json": schema["$defs"]["frame"],
-        "shutdown.json": schema["$defs"]["frame"],
-    }
+    fixtures = [
+        "describe.json",
+        "init.json",
+        "check.json",
+        "decision_block.json",
+        "decision_allow.json",
+        "error.json",
+        "ready.json",
+        "shutdown.json",
+    ]
     failed = False
-    for name, target in sorted(targets.items()):
+    for name in fixtures:
         instance = json.loads((FIXTURES / name).read_text())
         try:
-            jsonschema.validate(instance, target)
+            jsonschema.validate(instance, schema)
         except jsonschema.ValidationError as error:
             failed = True
             print(f"{name}: {error.message}")
