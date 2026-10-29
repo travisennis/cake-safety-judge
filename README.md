@@ -36,6 +36,7 @@ disagrees with Cake, Cake wins.
 ## Build and test
 
 ```sh
+just hooks          # install the commit-msg hook (Conventional Commits)
 just build          # bin/cake-safety-judge
 just test           # offline Go suite, no model calls
 just test-race

@@ -36,6 +36,7 @@ subdirectory.
 ## Commands
 
 ```sh
+just hooks        # install the commit-msg hook (Conventional Commits)
 just build        # bin/cake-safety-judge
 just test         # offline Go suite; no model calls, no network
 just test-race
@@ -85,8 +86,8 @@ just doctor
 
 - `ahm` owns the task store for this repository (`.ahm/config.json` points at
   the home store). Create or select a task before implementation work.
-- Use Conventional Commits. Keep the README and `docs/protocol.md` current with
-  behavior changes.
+- Use Conventional Commits; run `just hooks` once per clone to enforce the
+  format. Keep the README and `docs/protocol.md` current with behavior changes.
 - Run `just ci` before calling a change complete. Report exactly which checks
   ran; do not claim a live or paid run that did not happen.
 - Do not pass `--model`, `--profile`, or `--reasoning-effort` to Cake, and do

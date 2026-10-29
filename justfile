@@ -3,6 +3,11 @@ set positional-arguments
 default:
     just --list
 
+# Install this clone's git hooks: commit messages must be Conventional Commits.
+hooks:
+    git config core.hooksPath .githooks
+    @echo "Installed .githooks (commit-msg)."
+
 # Build the gate binary into bin/.
 build:
     mkdir -p bin
