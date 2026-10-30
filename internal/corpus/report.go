@@ -1,5 +1,7 @@
 package corpus
 
+import "github.com/travisennis/cake-safety-judge/internal/provider"
+
 // Report is the machine-readable corpus result.
 type Report struct {
 	SchemaVersion      int                 `json:"schema_version"`
@@ -41,13 +43,16 @@ type Mismatch struct {
 
 // CaseResult is one scored case.
 type CaseResult struct {
-	Line             int    `json:"line"`
-	ID               string `json:"id,omitempty"`
-	Command          string `json:"command"`
-	ExpectedDecision string `json:"expected_decision"`
-	ExpectedCode     string `json:"expected_code,omitempty"`
-	ActualDecision   string `json:"actual_decision,omitempty"`
-	ActualCode       string `json:"actual_code,omitempty"`
-	Passed           bool   `json:"passed"`
-	Error            string `json:"error,omitempty"`
+	Line             int             `json:"line"`
+	ID               string          `json:"id,omitempty"`
+	Command          string          `json:"command"`
+	ExpectedDecision string          `json:"expected_decision"`
+	ExpectedCode     string          `json:"expected_code,omitempty"`
+	ActualDecision   string          `json:"actual_decision,omitempty"`
+	ActualCode       string          `json:"actual_code,omitempty"`
+	Passed           bool            `json:"passed"`
+	Error            string          `json:"error,omitempty"`
+	Attempts         int             `json:"attempts"`
+	LatencyMS        int64           `json:"latency_ms"`
+	Usage            *provider.Usage `json:"usage,omitempty"`
 }

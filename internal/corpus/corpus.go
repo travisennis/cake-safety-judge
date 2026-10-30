@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/travisennis/cake-safety-judge/internal/judge"
+	"github.com/travisennis/cake-safety-judge/internal/provider"
 	"github.com/travisennis/cake-safety-judge/internal/rubric"
 )
 
@@ -31,6 +32,7 @@ type Case struct {
 	RepoDigest       *string  `json:"repo_digest"`
 	ExpectedDecision string   `json:"expected_decision"`
 	ExpectedCode     string   `json:"expected_code"`
+	Risk             string   `json:"risk,omitempty"`
 	Note             string   `json:"note,omitempty"`
 	Tags             []string `json:"tags,omitempty"`
 	// Skipped is true for an `unscored` independent case.
@@ -48,6 +50,7 @@ type rawCase struct {
 	Note             string   `json:"note"`
 	ExpectedDecision string   `json:"expected_decision"`
 	VerdictCode      string   `json:"verdict_code"`
+	Risk             string   `json:"risk"`
 	Tags             []string `json:"tags"`
 }
 
@@ -153,6 +156,7 @@ func normalize(line int, row rawCase) (Case, error) {
 		RepoDigest:       row.RepoDigest,
 		ExpectedDecision: expected,
 		ExpectedCode:     code,
+		Risk:             row.Risk,
 		Note:             row.Note,
 		Tags:             row.Tags,
 	}, nil
@@ -165,8 +169,9 @@ func cwdOrDefault(cwd string) string {
 	return cwd
 }
 
-// Evaluator runs one case through the gate's judge path.
-type Evaluator func(Case) (judge.Verdict, error)
+// Evaluator runs one case through the gate's judge path. Attempts carry the
+// latency and token accounting used by live comparisons.
+type Evaluator func(Case) (judge.Verdict, []judge.Attempt, error)
 
 // Run evaluates every case and builds the report.
 func Run(cases []Case, evaluator Evaluator, corpusName, providerName string, fingerprint string) Report {
@@ -202,7 +207,18 @@ func Run(cases []Case, evaluator Evaluator, corpusName, providerName string, fin
 			ExpectedDecision: c.ExpectedDecision,
 			ExpectedCode:     c.ExpectedCode,
 		}
-		verdict, err := evaluator(c)
+		verdict, attempts, err := evaluator(c)
+		result.Attempts = len(attempts)
+		var usage provider.Usage
+		for _, attempt := range attempts {
+			result.LatencyMS += attempt.Latency.Milliseconds()
+			usage.InputTokens += attempt.Usage.InputTokens
+			usage.OutputTokens += attempt.Usage.OutputTokens
+			usage.TotalTokens += attempt.Usage.TotalTokens
+		}
+		if usage != (provider.Usage{}) {
+			result.Usage = &usage
+		}
 		if err != nil {
 			result.Error = err.Error()
 		} else {

@@ -34,6 +34,7 @@ corpus-check: build
     mkdir -p reports
     ./bin/cake-safety-judge corpus -corpus corpus/commands.jsonl -report reports/commands.json
     ./bin/cake-safety-judge corpus -corpus corpus/independent-v2.jsonl -report reports/independent-v2.json
+    ./bin/cake-safety-judge corpus -corpus corpus/egress-v1.jsonl -report reports/egress-v1.json
 
 # Validate the checked-in fixtures against the cake-gate/1 schema when the
 # Python jsonschema module is available; prints a skip otherwise.
@@ -42,8 +43,16 @@ schema-check:
 
 ci: fmt-check vet test corpus-check
 
-# Install into ~/bin by default (BIN_DIR overrides). Cake auto-detects the
-# bare name on PATH; ~/bin is already on this workspace's PATH.
+# Live TypeSafe calibration over the gold corpus. Spends quota; not part of ci.
+calibrate: build
+    ./bin/cake-safety-judge calibrate -corpus corpus/independent-v2.jsonl -repetitions 5 -report reports/typesafe-calibration.json
+
+# Compare two corpus reports. Usage: just compare baseline.json candidate.json
+compare baseline candidate: build
+    ./bin/cake-safety-judge compare -baseline {{baseline}} -candidate {{candidate}} -report reports/comparison.json
+
+# Install into ~/bin by default (BIN_DIR overrides). Cake selects the bare
+# name from PATH; ~/bin is already on this workspace's PATH.
 install:
     ./bin/install
 

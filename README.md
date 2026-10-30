@@ -6,9 +6,12 @@ in-process: the rubric, the model call, strict verdict parsing, bounded
 recovery, the stable verdict-code vocabulary, and the optional TypeSafe
 cascade.
 
-Status: slice 2 of the `cake-gate` initiative. The gate is built and tested
-offline; it is not yet the default in Cake. Slice 3 runs it in shadow beside
-the in-process judge, and slice 4 makes it the default when installed.
+Status: Cake's in-process judge has been deleted; this gate is the only
+production `bash.exec` policy path. The gate is built, installed, and green on
+the offline suite, but it is not enabled in Trav's live settings yet. Prompt
+hardening, egress coverage, TypeSafe calibration, and the recorded/live
+comparison harness are in place; quality measurement and enablement remain
+open.
 
 The repository is public at <https://github.com/travisennis/cake-safety-judge>.
 
@@ -41,7 +44,7 @@ just build          # bin/cake-safety-judge
 just test           # offline Go suite, no model calls
 just test-race
 just vet
-just corpus-check   # fake-provider run over both frozen corpora
+just corpus-check   # fake-provider run over every corpus
 just ci             # fmt-check + vet + test + corpus-check
 ```
 
@@ -54,8 +57,9 @@ just install        # ~/bin/cake-safety-judge (override with BIN_DIR)
 just doctor         # run describe and report whether Cake can find it
 ```
 
-Cake auto-detects `cake-safety-judge` on `PATH` only after slice 4. Until then,
-`check` and `corpus` are the usable surfaces.
+Cake selects the gate named `safety` when `[tools.bash].gates` is absent and
+runs `cake-safety-judge` from `PATH`; `just install` puts it there. `cake gates
+list` reports whether the pipeline is active or explicitly bypassed.
 
 ## Commands
 
@@ -71,7 +75,7 @@ Prints the cached declaration Cake validates before any work:
   "phases": ["pre_tool"],
   "actions": ["bash.exec"],
   "transports": ["stdio"],
-  "capabilities": ["resolved-models", "shadow", "diagnostic"]
+  "capabilities": ["resolved-models", "shadow", "diagnostic", "calibration-identity"]
 }
 ```
 
@@ -131,6 +135,7 @@ with counts by decision, code, tag, and case, plus every mismatch.
 ```sh
 cake-safety-judge corpus -corpus corpus/commands.jsonl -report reports/commands.json
 cake-safety-judge corpus -corpus corpus/independent-v2.jsonl -report reports/independent-v2.json
+cake-safety-judge corpus -corpus corpus/egress-v1.jsonl -report reports/egress-v1.json
 cake-safety-judge corpus -corpus corpus/commands.jsonl \
   -provider record -record corpus/recorded.jsonl -report reports/recorded.json
 ```
@@ -138,8 +143,47 @@ cake-safety-judge corpus -corpus corpus/commands.jsonl \
 `-provider fake` echoes the corpus label as a well-formed verdict. It proves
 request assembly, strict parsing, code validation, decision mapping, evidence,
 and framing; it does **not** prove model parity. Use `-provider record` with
-real judge output for offline parity evidence. The paid live comparison against
-Cake's in-process oracle is a separate authorized run.
+real judge output for offline replay. `-provider live` runs the real judge and
+requires `-descriptor-file` or `-base-url`; add `-record-out <file>` to capture
+the run for replay. Live runs spend provider quota and are never part of CI.
+
+### `compare`
+
+Compares two corpus reports and fails on an unsafe divergence: a case the
+baseline blocked and the candidate allowed. Missing cases and candidate errors
+also fail. False blocks and code changes are reported but are not safety
+failures.
+
+```sh
+cake-safety-judge compare -baseline reports/recorded.json \
+  -candidate reports/live.json -report reports/comparison.json
+```
+
+### `calibration`
+
+Prints the TypeSafe calibration identity for the embedded rubric or a
+`--rubric-file`: model, effective-rubric fingerprint, request and context schema
+fingerprints, corpus version/fingerprint, cutoff, and whether a recorded
+calibration matches. `--require-recorded` exits `1` on a mismatch.
+
+```sh
+cake-safety-judge calibration
+cake-safety-judge calibration --rubric-file .cake/judge-rubric.md --require-recorded
+```
+
+### `calibrate`
+
+Measures the TypeSafe fast path over a corpus and writes probabilities, unsafe
+approvals, observational coverage, latency, and token usage. This is a live,
+paid run and is not part of CI.
+
+```sh
+cake-safety-judge calibrate -corpus corpus/independent-v2.jsonl \
+  -report reports/typesafe-calibration.json
+```
+
+`-repetitions 5` matches the recorded ADR 034 protocol; the default is one
+observation per case for a smoke run. `-max-cases` limits a run.
 
 ## Configuration
 
@@ -190,13 +234,30 @@ failure or lower probability falls back to the judge. Under `shadow`, the
 observation is recorded as `typesafe_observation` evidence and never changes
 the decision. The cutoff is a constant, not a setting.
 
+Cascade is armed only when the effective identity matches a recorded
+calibration: the pinned model, effective-rubric fingerprint, request and
+context schema fingerprints, and corpus version/fingerprint. A custom
+`rubric_file` changes the rubric fingerprint and therefore requires a new
+measurement. An unrecorded identity is downgraded to `shadow` with a
+`ready.warnings` entry; it never fast-approves. The current identity and the
+ADR 034 record are visible from `cake-safety-judge calibration` and in every
+`typesafe_observation` evidence entry. See `docs/calibration.md` for the full
+identity, evidence, caveat, and re-measurement protocol.
+
 ## Verdict behavior
 
 The gate ports Cake's judge behavior:
 
-- The system prompt is Cake's `judge_rubric.md`, embedded byte-for-byte.
+- The system prompt is the embedded rubric, optionally followed by
+  user-supplied guidance.
 - The user prompt carries `command`, `cwd`, `repo_digest`, `reason`, and
-  `script_evidence` as JSON, framed as untrusted input.
+  `script_evidence` as JSON, framed as untrusted input and terminated by a
+  fixed end marker.
+- The packet is bounded per field and as a whole. Oversized commands, paths,
+  or script evidence fail closed before provider transport; a long reason is
+  truncated and marked. Credential-shaped values are replaced with typed
+  `[REDACTED:...]` markers, terminal controls are encoded, and the packet
+  records redactions and truncations. Diagnostics apply the same redaction.
 - A verdict must be exactly one JSON object, optionally in one complete fence
   tagged empty or `json`; no trailing data, no repair.
 - `block` and `warn` require a known code. Only `rg-replace-footgun` may warn.
@@ -210,8 +271,9 @@ The gate ports Cake's judge behavior:
 
 Evidence is metadata only. This gate emits `attempt` entries (model, attempt
 number, latency, status, terminal class, usage) and `typesafe_observation`
-entries (model, mode, probability or failure class, latency). It never places
-the command, reason, prompt, or response text in evidence.
+entries (model, mode, probability or failure class, latency, calibration
+identity, and whether that identity is recorded). It never places the command,
+reason, prompt, or response text in evidence.
 
 ## Layout
 
@@ -220,23 +282,25 @@ cmd/cake-safety-judge/   CLI dispatch
 internal/protocol/       cake-gate/1 types and validation
 internal/rubric/         embedded rubric and verdict codes
 internal/judge/          prompt, strict parsing, bounded recovery
-internal/provider/       chat_completions, responses, fake, record
-internal/typesafe/       bounded observation and cascade input
+internal/provider/       chat_completions, responses, fake, record, recorder
+internal/typesafe/       bounded observation, calibration identity, cascade input
+internal/calibrate/      TypeSafe corpus calibration runner
 internal/gate/           config, engine, describe, serve, exit mapping
-internal/corpus/         corpus loader, evaluator, JSON report
-corpus/                  frozen decision corpora and provenance
+internal/corpus/         corpus loader, evaluator, comparison, JSON report
+corpus/                  frozen decision corpora, egress coverage, provenance
 tests/fixtures/          schema fixtures
-bench/                   benchmark notes (SLO work is slice 3)
-docs/                    implementer protocol notes and schema copy
+bench/                   recorded/live comparison commands
+docs/                    protocol notes, schema copy, egress audit, calibration
 ```
 
 ## Roadmap
 
-- Slice 2 (this repository): build the gate, port rubric/corpus, offline tests.
-- Slice 3: run it in shadow beside the in-process judge and measure divergence,
-  latency, and cost on live sessions plus the corpus.
-- Slice 4: make it the default when installed, add compatibility aliases.
-- Slice 5: delete the judge internals from Cake and delegate `bash check`.
+- Done: external gate, Cake extraction, prompt bounds, egress coverage, TypeSafe
+  calibration identity, and the recorded/live comparison harness.
+- Open: live quality measurement, TypeSafe re-measurement for any custom rubric,
+  and enablement in the live settings.
+- Follow-up: keep Cake's ADR 034 text aligned with this gate's recorded identity
+  if the two diverge.
 
 ## License
 

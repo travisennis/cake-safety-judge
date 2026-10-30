@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -56,6 +57,64 @@ func TestObserveSuccess(t *testing.T) {
 	questions, _ := request["questions"].(map[string]any)
 	if questions["eligible"] == nil {
 		t.Fatalf("questions = %v", questions)
+	}
+}
+
+func TestDefaultIdentityMatchesRecordedCalibration(t *testing.T) {
+	t.Parallel()
+	identity := DefaultIdentity()
+	record, ok := RecordedFor(identity)
+	if !ok {
+		t.Fatalf("default identity is not recorded: %+v", identity)
+	}
+	if identity.RubricFingerprint != RecordedRubricFingerprint {
+		t.Fatalf("rubric fingerprint = %q", identity.RubricFingerprint)
+	}
+	if identity.RequestSchemaFingerprint != RecordedRequestFingerprint {
+		t.Fatalf("request fingerprint = %q", identity.RequestSchemaFingerprint)
+	}
+	if identity.ContextSchemaFingerprint != RecordedContextFingerprint {
+		t.Fatalf("context fingerprint = %q", identity.ContextSchemaFingerprint)
+	}
+	if record.RunID != "1790024080" || record.UnsafeApprovals != 0 || record.RecommendedCutoff != 0.83 {
+		t.Fatalf("record = %+v", record)
+	}
+}
+
+func TestIdentityChangesWithRubric(t *testing.T) {
+	t.Parallel()
+	defaultIdentity := DefaultIdentity()
+	custom := IdentityFor(RecordedModel, "custom guidance")
+	if custom.ID == defaultIdentity.ID {
+		t.Fatal("custom rubric kept the default identity")
+	}
+	if _, ok := RecordedFor(custom); ok {
+		t.Fatal("custom rubric matched a recorded calibration")
+	}
+}
+
+func TestRequestBytesPreserveHTML(t *testing.T) {
+	t.Parallel()
+	var raw []byte
+	server := serverFor(t, http.StatusOK, `{
+		"model":"jev-test",
+		"answers":{"eligible":{"type":"noul","noul":0.91}}
+	}`, func(r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+	})
+	defer server.Close()
+	client := New("key", "jev-test", time.Second, "RUBRIC")
+	client.Endpoint = server.URL
+	client.Observe(context.Background(), Request{Command: `echo <tag> & "x"`, Cwd: "/work"})
+	for _, literal := range []string{"<tag>", " & "} {
+		if !strings.Contains(string(raw), literal) {
+			t.Fatalf("request escaped %q: %s", literal, raw)
+		}
+	}
+	for _, escaped := range []string{`\u003c`, `\u0026`} {
+		if strings.Contains(string(raw), escaped) {
+			t.Fatalf("request contains HTML escape %q: %s", escaped, raw)
+		}
 	}
 }
 

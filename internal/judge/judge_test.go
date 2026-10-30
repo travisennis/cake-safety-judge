@@ -233,7 +233,10 @@ func TestPrompts(t *testing.T) {
 	client := New(&scriptedProvider{}, provider.Descriptor{Model: "judge"}, time.Second, time.Second)
 	client.Rubric = "RUBRIC"
 
-	system, user := client.prompts(Request{Command: "cat <file>", Cwd: "/work"})
+	system, user, err := client.prompts(Request{Command: "cat <file>", Cwd: "/work"})
+	if err != nil {
+		t.Fatalf("prompts: %v", err)
+	}
 	if system != "RUBRIC" {
 		t.Fatalf("system = %q", system)
 	}
@@ -246,12 +249,18 @@ func TestPrompts(t *testing.T) {
 	if !strings.Contains(user, `"command":"cat <file>"`) {
 		t.Fatalf("HTML escaped or command missing: %s", user)
 	}
+	if !strings.Contains(user, "End of untrusted input") {
+		t.Fatalf("missing packet terminator: %s", user)
+	}
 
-	_, user = client.prompts(Request{
+	_, user, err = client.prompts(Request{
 		Command:        "bash run.sh",
 		Cwd:            "/work",
 		ScriptEvidence: []ScriptEvidence{{Path: "run.sh", Contents: "rm -rf /"}},
 	})
+	if err != nil {
+		t.Fatalf("prompts: %v", err)
+	}
 	if !strings.Contains(user, `"script_evidence":{"path":"run.sh","contents":"rm -rf /"}`) {
 		t.Fatalf("missing script evidence: %s", user)
 	}

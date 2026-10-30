@@ -28,7 +28,7 @@ protocol frames.
   "phases": ["pre_tool"],
   "actions": ["bash.exec"],
   "transports": ["stdio"],
-  "capabilities": ["resolved-models", "shadow", "diagnostic"]
+  "capabilities": ["resolved-models", "shadow", "diagnostic", "calibration-identity"]
 }
 ```
 
@@ -126,6 +126,29 @@ failure is an `error` frame with class `config`; Cake removes Bash for the run.
   only for `cake bash check --diagnostic` and only for a gate declaring the
   `diagnostic` capability.
 
+### Prompt packet bounds
+
+The gate never sends an unbounded or partially represented packet to a
+provider. The limits apply after redaction and control-character encoding.
+
+| Field | Limit | Over limit |
+| --- | ---: | --- |
+| `command` | 32 KiB | `unsupported` error before transport |
+| `cwd` | 4 KiB | `unsupported` error before transport |
+| `repo_digest` | 1 KiB | `unsupported` error before transport |
+| `reason` | 16 KiB | truncated with a marker |
+| `script_evidence.path` | 4 KiB | `unsupported` error before transport |
+| `script_evidence.contents` | 32 KiB | `unsupported` error before transport |
+| complete user packet | 128 KiB | `unsupported` error before transport |
+| effective system prompt | 64 KiB | `config` error at init |
+
+Invalid UTF-8 in any dynamic field is a `malformed` error. Empty `command` or
+`cwd` is `malformed`. The packet carries `truncated` and `redactions` markers;
+credential-shaped values become `[REDACTED:<kind>]`; terminal controls become
+literal `\uXXXX` text. A fixed end marker follows the JSON object, so dynamic
+text cannot reshape the wrapper. Diagnostics and error messages use the same
+redaction and UTF-8-safe truncation.
+
 ## Decision
 
 ```json
@@ -158,7 +181,8 @@ failure is an `error` frame with class `config`; Cake removes Bash for the run.
   - `attempt`: `model`, `api_type`, `attempt`, `retry_delay_ms`, `latency_ms`,
     optional `status_code`, `terminal_class`, optional `usage`.
   - `typesafe_observation`: `model`, `mode`, optional `probability`, optional
-    `failure_class`, `latency_ms`.
+    `failure_class`, `latency_ms`, optional `calibration` (the full identity),
+    and `recorded` (whether the identity matches a recorded calibration).
 
 Evidence never carries the command, reason, prompt, or response text.
 
@@ -232,10 +256,34 @@ Exit classes for `cake bash check`: `timeout`, `network`, `auth`, and
   `TYPESAFE_AI_API_KEY` disables the observation with a warning and the judge
   still runs.
 
+### Calibration identity
+
+The compiled `0.85` cutoff is bound to the exact inputs it was measured
+against:
+
+- the TypeSafe model ID;
+- the effective-rubric SHA-256, including any appended user rubric;
+- the fixed request-schema fingerprint;
+- the ordered context-schema fingerprint (`command`, `cwd`, `repo_digest`,
+  `untrusted_reason`);
+- the corpus version and SHA-256 prefix;
+- the cutoff itself.
+
+The identity has a stable 16-hex ID. `cascade` arms only when the identity
+matches a recorded calibration. An unrecorded identity is downgraded to
+`shadow` with a `ready.warnings` entry; it never fast-approves. `shadow` and
+`off` do not require a record. The released binary exposes the identity through
+`cake-safety-judge calibration`, the `calibration-identity` describe capability,
+the opt-in diagnostic line, and `typesafe_observation` evidence. The recorded
+ADR 034 calibration covers the embedded rubric at `jev-1.13.0` and corpus
+`independent-v2`/`86d3d49c`.
+
 ## Safety invariants
 
 - The gate never reports an allow it did not obtain: a provider failure is an
   error frame.
+- A packet that cannot be represented within the documented bounds fails closed
+  before provider transport; a partial packet is never judged.
 - The gate never reads the workspace to assemble action evidence or resolve
   sandbox paths. The `input` frame and a configured rubric file are the only
   inputs.

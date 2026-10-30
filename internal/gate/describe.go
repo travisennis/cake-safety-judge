@@ -14,6 +14,6 @@ func Describe() protocol.Describe {
 		Phases:       []string{"pre_tool"},
 		Actions:      []string{"bash.exec"},
 		Transports:   []string{"stdio"},
-		Capabilities: []string{"resolved-models", "shadow", "diagnostic"},
+		Capabilities: []string{"resolved-models", "shadow", "diagnostic", "calibration-identity"},
 	}
 }

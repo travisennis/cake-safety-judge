@@ -11,9 +11,9 @@ repository owns only the command-safety decision: rubric, prompt, model
 transport, strict verdict parsing, bounded recovery, verdict codes, and the
 TypeSafe observation.
 
-Slices 0–1 of the `cake-gate` initiative are merged in Cake. This repository is
-slice 2 and is public at <https://github.com/travisennis/cake-safety-judge>. Do
-not make Cake changes in a task here; the workspace rule is one task in one
+Cake's in-process judge has been deleted; this repository owns the command-safety
+decision and is public at <https://github.com/travisennis/cake-safety-judge>.
+Do not make Cake changes in a task here; the workspace rule is one task in one
 subdirectory.
 
 ## Layout
@@ -22,13 +22,15 @@ subdirectory.
   `corpus`, `version`).
 - `internal/protocol/` — frame types and validation.
 - `internal/rubric/` — the embedded rubric and stable verdict-code vocabulary.
-- `internal/judge/` — prompt assembly, strict parsing, one-attempt recovery.
-- `internal/provider/` — `chat_completions`, `responses`, fake, and recorded
-  transports.
-- `internal/typesafe/` — bounded TypeSafe observation.
+- `internal/judge/` — bounded, redacted prompt assembly, strict parsing,
+  one-attempt recovery.
+- `internal/provider/` — `chat_completions`, `responses`, fake, recorded, and
+  recording transports.
+- `internal/typesafe/` — bounded TypeSafe observation and calibration identity.
+- `internal/calibrate/` — TypeSafe corpus calibration runner.
 - `internal/gate/` — config resolution, engine, describe, serve loop, exit map.
-- `internal/corpus/` — corpus loader and JSON report.
-- `corpus/` — frozen decision corpora, copied from Cake with provenance.
+- `internal/corpus/` — corpus loader, JSON report, and report comparison.
+- `corpus/` — frozen Cake-derived corpora plus gate-owned egress coverage.
 - `tests/fixtures/` — checked-in schema fixtures.
 - `docs/cake-gate-1.schema.json` — checked-in contract schema.
 - `bin/install`, `bin/doctor` — install and discovery checks.
@@ -41,9 +43,11 @@ just build        # bin/cake-safety-judge
 just test         # offline Go suite; no model calls, no network
 just test-race
 just vet
-just corpus-check # fake-provider run over both corpora
+just corpus-check # fake-provider run over every corpus
 just schema-check # optional Python jsonschema validation of fixtures
 just ci           # fmt-check, vet, test, corpus-check
+just calibrate    # live TypeSafe calibration; spends quota, not in ci
+just compare a b  # compare two corpus reports; unsafe divergence fails
 just install      # go install
 just doctor
 ```
@@ -58,8 +62,9 @@ just doctor
   Requests may be concurrent and responses may be out of order; match `id`.
 - `shutdown` and closed stdin are graceful: stop reading, wait for in-flight
   checks, exit `0`. A protocol violation is process-fatal.
-- The rubric text is byte-identical to `cake/src/clients/judge_rubric.md`.
-  Changing it is a policy change that requires the corpus and new evidence.
+- This repository owns the rubric; Cake no longer embeds a copy. Changing it is
+  a policy change that requires the corpus and new evidence, and it changes the
+  TypeSafe calibration identity.
 - Strict verdict parsing is a security property: one JSON object, at most one
   complete fence tagged empty or `json`, no trailing data, no repair.
 - Retry exactly once, and only for a timeout, retryable transport/HTTP failure,
@@ -76,6 +81,10 @@ just doctor
   evidence.
 - Evidence is metadata only. Never place command, reason, prompt, or response
   text in evidence.
+- The judge packet is bounded and redacted. An unrepresentable packet fails
+  closed before provider transport; never judge a partial packet.
+- Cascade arms only when the effective identity matches a recorded calibration.
+  An unrecorded identity stays shadow-only and emits a warning.
 - The TypeSafe cutoff `0.85` is compiled. Do not make it configurable.
 - The corpus files are frozen. Do not relabel a case to improve a run. A corpus
   change is a new version with a new fingerprint.

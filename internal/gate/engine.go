@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"time"
+	"unicode/utf8"
 
 	"github.com/travisennis/cake-safety-judge/internal/judge"
 	"github.com/travisennis/cake-safety-judge/internal/protocol"
@@ -26,11 +27,13 @@ type attemptData struct {
 }
 
 type typesafeData struct {
-	Model        string   `json:"model"`
-	Mode         string   `json:"mode"`
-	Probability  *float64 `json:"probability,omitempty"`
-	FailureClass string   `json:"failure_class,omitempty"`
-	LatencyMS    int64    `json:"latency_ms"`
+	Model        string             `json:"model"`
+	Mode         string             `json:"mode"`
+	Probability  *float64           `json:"probability,omitempty"`
+	FailureClass string             `json:"failure_class,omitempty"`
+	LatencyMS    int64              `json:"latency_ms"`
+	Calibration  *typesafe.Identity `json:"calibration,omitempty"`
+	Recorded     bool               `json:"recorded"`
 }
 
 // Evaluate returns one decision or one error frame. The decision frame is
@@ -51,6 +54,8 @@ func (e *Engine) Evaluate(ctx context.Context, check protocol.CheckFrame) (proto
 			Probability:  observation.Probability,
 			FailureClass: observation.FailureClass,
 			LatencyMS:    observation.Elapsed.Milliseconds(),
+			Calibration:  e.TypesafeIdentity,
+			Recorded:     e.TypesafeRecord != nil,
 		}))
 		if e.TypesafeMode == "cascade" && observation.FailureClass == "" &&
 			observation.Probability != nil && *observation.Probability >= typesafe.Cutoff {
@@ -83,10 +88,14 @@ func (e *Engine) Evaluate(ctx context.Context, check protocol.CheckFrame) (proto
 	}
 
 	verdict, attempts, err := e.Judge.Evaluate(ctx, request)
-	system, user := e.Judge.Prompts(request)
 	if err != nil {
-		e.diagnose(check, "", err.Error(), system, user)
-		return protocol.DecisionFrame{}, failureFrame(check.ID, err)
+		e.diagnose(check, "", err.Error(), "", "")
+		return protocol.DecisionFrame{}, e.failureFrame(check.ID, err)
+	}
+	system, user, promptErr := e.Judge.Prompts(request)
+	if promptErr != nil {
+		e.diagnose(check, "", promptErr.Error(), "", "")
+		return protocol.DecisionFrame{}, e.failureFrame(check.ID, promptErr)
 	}
 	for _, attempt := range attempts {
 		data := attemptData{
@@ -138,7 +147,7 @@ func (e *Engine) finishDecision(check protocol.CheckFrame, decision protocol.Dec
 	return decision, nil
 }
 
-func failureFrame(id string, err error) *protocol.ErrorFrame {
+func (e *Engine) failureFrame(id string, err error) *protocol.ErrorFrame {
 	class := "internal"
 	message := err.Error()
 	var failure *judge.Failure
@@ -146,9 +155,7 @@ func failureFrame(id string, err error) *protocol.ErrorFrame {
 		class = failure.Class
 	}
 	class = protocol.ErrorClass(class)
-	if len(message) > 1024 {
-		message = message[:1024]
-	}
+	message = judge.SanitizeMessage(e.sanitize(message))
 	return &protocol.ErrorFrame{
 		Protocol: protocol.Version,
 		Type:     "error",
@@ -173,19 +180,40 @@ func (e *Engine) diagnose(check protocol.CheckFrame, decision, detail, system, u
 		return
 	}
 	_, _ = fmt.Fprintf(e.Log, "DIAGNOSTIC gate=safety check=%s decision=%s\n", check.ID, decision)
-	_, _ = fmt.Fprintf(e.Log, "DIAGNOSTIC command=%q cwd=%q\n", check.Input.Command, check.Input.Cwd)
-	_, _ = fmt.Fprintf(e.Log, "DIAGNOSTIC system_prompt=%s\n", truncate(system, diagnosticPreview))
-	_, _ = fmt.Fprintf(e.Log, "DIAGNOSTIC user_prompt=%s\n", truncate(user, diagnosticPreview))
-	if detail != "" {
-		_, _ = fmt.Fprintf(e.Log, "DIAGNOSTIC detail=%s\n", truncate(detail, diagnosticPreview))
+	_, _ = fmt.Fprintf(e.Log, "DIAGNOSTIC command=%q cwd=%q\n",
+		e.sanitize(check.Input.Command), e.sanitize(check.Input.Cwd))
+	if e.TypesafeIdentity != nil {
+		_, _ = fmt.Fprintf(e.Log,
+			"DIAGNOSTIC typesafe_identity=%s recorded=%t model=%s rubric=%s request_schema=%s context_schema=%s corpus=%s/%s cutoff=%.2f\n",
+			e.TypesafeIdentity.ID, e.TypesafeRecord != nil, e.TypesafeIdentity.Model,
+			e.TypesafeIdentity.RubricFingerprint, e.TypesafeIdentity.RequestSchemaFingerprint,
+			e.TypesafeIdentity.ContextSchemaFingerprint, e.TypesafeIdentity.CorpusVersion,
+			e.TypesafeIdentity.CorpusFingerprint, e.TypesafeIdentity.Cutoff)
 	}
+	_, _ = fmt.Fprintf(e.Log, "DIAGNOSTIC system_prompt=%s\n", truncate(e.sanitize(system), diagnosticPreview))
+	_, _ = fmt.Fprintf(e.Log, "DIAGNOSTIC user_prompt=%s\n", truncate(e.sanitize(user), diagnosticPreview))
+	if detail != "" {
+		_, _ = fmt.Fprintf(e.Log, "DIAGNOSTIC detail=%s\n", truncate(e.sanitize(detail), diagnosticPreview))
+	}
+}
+
+func (e *Engine) sanitize(value string) string {
+	value = judge.RedactValue(value, e.Judge.APIKey)
+	if e.Typesafe != nil {
+		value = judge.RedactValue(value, e.Typesafe.APIKey)
+	}
+	return judge.SanitizeText(value)
 }
 
 func truncate(value string, limit int) string {
 	if len(value) <= limit {
 		return value
 	}
-	return value[:limit] + "..."
+	cut := limit
+	for cut > 0 && !utf8.ValidString(value[:cut]) {
+		cut--
+	}
+	return value[:cut] + "..."
 }
 
 // SetDiagnosticWriter sets the sensitive diagnostic sink.

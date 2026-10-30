@@ -1,12 +1,14 @@
 # Command-safety corpora
 
-Copied from Cake on 2026-10-25 so the gate can be evaluated without reading
-Cake's tree. The case content is unchanged.
+The Cake-derived files were copied on 2026-10-25 so the gate can be evaluated
+without reading Cake's tree; their case content is unchanged. `egress-v1.jsonl`
+is gate-owned and is not copied from Cake.
 
 | File | Cases | SHA-256 prefix | Role |
 | --- | ---: | --- | --- |
 | `commands.jsonl` | 210 | `806177be` | Legacy rubric regression set |
 | `independent-v2.jsonl` | 204 | `86d3d49c` | Current gold set; one `unscored` row |
+| `egress-v1.jsonl` | 22 | `e92d736b` | Gate-owned network/data-egress coverage |
 | `independent-v1.jsonl` | 34 | `ea23cd5f` | Historical fingerprint only |
 | `provider-v1.jsonl` | 4 | `f85e49fa` | Provider-failure fixture; not a decision corpus |
 
@@ -61,6 +63,19 @@ A record file is JSONL. One entry per provider outcome:
 To collect real parity evidence, record the assistant content and status for
 each corpus case from a judge run, then replay with `-provider record`. That
 run is a separate, authorized activity; the fake run never substitutes for it.
+
+## Egress coverage (gate-owned)
+
+`egress-v1.jsonl` is authored in this repository for the audit of network and
+data-egress coverage. It is not copied from Cake and is not an oracle baseline.
+It adds representative rows for secret-read-then-upload, variable,
+substitution, wrapper, `xargs`, package install versus publish, cloud copy,
+untrusted destinations, loopback, metadata-only requests, and
+reason-laundering or injected attempts to authorize an export. The coverage
+table and remaining gaps are in `docs/egress-coverage.md`.
+
+Changing this file is a new corpus version with a new fingerprint; do not
+relabel a row to improve a measured run.
 
 ## Report
 

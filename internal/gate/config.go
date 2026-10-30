@@ -143,14 +143,16 @@ type Dependencies struct {
 
 // Engine is one initialized gate instance.
 type Engine struct {
-	Config       Config
-	Descriptor   provider.Descriptor
-	Judge        *judge.Client
-	Typesafe     *typesafe.Client
-	TypesafeMode string
-	Warnings     []string
-	Now          func() time.Time
-	Log          io.Writer
+	Config           Config
+	Descriptor       provider.Descriptor
+	Judge            *judge.Client
+	Typesafe         *typesafe.Client
+	TypesafeMode     string
+	TypesafeIdentity *typesafe.Identity
+	TypesafeRecord   *typesafe.Record
+	Warnings         []string
+	Now              func() time.Time
+	Log              io.Writer
 }
 
 // Build initializes the gate from an init frame.
@@ -210,15 +212,30 @@ func BuildWith(init protocol.InitFrame, deps Dependencies) (*Engine, error) {
 			mode = "off"
 		}
 		if mode != "off" {
+			model := config.Typesafe.Model
+			if model == "" {
+				model = defaultTypesafe
+			}
+			identity := typesafe.IdentityFor(model, systemPrompt)
+			engine.TypesafeIdentity = &identity
+			if mode == "cascade" {
+				record, ok := typesafe.RecordedFor(identity)
+				if !ok {
+					mode = "shadow"
+					warnings = append(warnings, fmt.Sprintf(
+						"typesafe cascade disabled: calibration identity %s is not recorded for model %s, rubric %s, request %s, context %s, corpus %s/%s; running shadow-only",
+						identity.ID, identity.Model, identity.RubricFingerprint,
+						identity.RequestSchemaFingerprint, identity.ContextSchemaFingerprint,
+						identity.CorpusVersion, identity.CorpusFingerprint))
+				} else {
+					engine.TypesafeRecord = &record
+				}
+			}
 			apiKey := os.Getenv(typesafe.APIKeyEnv)
 			if apiKey == "" {
 				warnings = append(warnings,
 					"typesafe disabled: TYPESAFE_AI_API_KEY is not set in the gate environment")
 			} else {
-				model := config.Typesafe.Model
-				if model == "" {
-					model = defaultTypesafe
-				}
 				timeout := defaultTypesafeMS
 				if config.Typesafe.TimeoutMS != nil {
 					timeout = *config.Typesafe.TimeoutMS
@@ -322,6 +339,16 @@ func validateDescriptor(descriptor provider.Descriptor) error {
 		return fmt.Errorf("resolved model api_type %q is invalid", descriptor.APIType)
 	}
 	return nil
+}
+
+// LoadRubricPrompt returns the effective system prompt for an optional user
+// rubric file. It uses the same resolution and size limit as initialization.
+func LoadRubricPrompt(path string) (string, error) {
+	user, _, err := loadRubric(path)
+	if err != nil {
+		return "", err
+	}
+	return rubric.Prompt(user), nil
 }
 
 func loadRubric(path string) (string, string, error) {

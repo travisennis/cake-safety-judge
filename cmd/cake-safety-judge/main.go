@@ -11,11 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/travisennis/cake-safety-judge/internal/calibrate"
 	"github.com/travisennis/cake-safety-judge/internal/corpus"
 	"github.com/travisennis/cake-safety-judge/internal/gate"
 	"github.com/travisennis/cake-safety-judge/internal/judge"
 	"github.com/travisennis/cake-safety-judge/internal/protocol"
 	"github.com/travisennis/cake-safety-judge/internal/provider"
+	"github.com/travisennis/cake-safety-judge/internal/typesafe"
 )
 
 func main() {
@@ -45,6 +47,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCheck(args[1:], stdout, stderr)
 	case "corpus":
 		return runCorpus(args[1:], stdout, stderr)
+	case "calibration":
+		return runCalibration(args[1:], stdout, stderr)
+	case "calibrate":
+		return runCalibrate(args[1:], stdout, stderr)
+	case "compare":
+		return runCompare(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		_, _ = fmt.Fprintf(stdout, "cake-safety-judge %s\n", gate.Version)
 		return 0
@@ -66,6 +74,9 @@ Usage:
   cake-safety-judge serve
   cake-safety-judge check [flags] -- <command>
   cake-safety-judge corpus [flags]
+  cake-safety-judge calibration [flags]
+  cake-safety-judge calibrate [flags]
+  cake-safety-judge compare [flags]
   cake-safety-judge version
 
 Serve is the Cake transport. Check and corpus are human/offline modes.
@@ -291,18 +302,138 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+type calibrationOutput struct {
+	Protocol string            `json:"protocol"`
+	Type     string            `json:"type"`
+	Identity typesafe.Identity `json:"identity"`
+	Recorded bool              `json:"recorded"`
+	Record   *typesafe.Record  `json:"record,omitempty"`
+}
+
+func runCalibration(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("calibration", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	model := flags.String("model", typesafe.RecordedModel, "TypeSafe model ID")
+	rubricFile := flags.String("rubric-file", "", "append user rubric guidance from this file")
+	requireRecorded := flags.Bool("require-recorded", false, "exit 1 when the identity has no recorded calibration")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	systemPrompt, err := gate.LoadRubricPrompt(*rubricFile)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "calibration: %v\n", err)
+		return 3
+	}
+	identity := typesafe.IdentityFor(*model, systemPrompt)
+	record, ok := typesafe.RecordedFor(identity)
+	output := calibrationOutput{
+		Protocol: protocol.Version,
+		Type:     "calibration",
+		Identity: identity,
+		Recorded: ok,
+	}
+	if ok {
+		output.Record = &record
+	}
+	if code := encodeIndent(stdout, output); code != 0 {
+		return code
+	}
+	if *requireRecorded && !ok {
+		return 1
+	}
+	return 0
+}
+
+func runCalibrate(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("calibrate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	corpusPath := flags.String("corpus", "corpus/independent-v2.jsonl", "JSONL corpus path")
+	reportPath := flags.String("report", "", "write the JSON report here (default stdout)")
+	model := flags.String("model", typesafe.RecordedModel, "TypeSafe model ID")
+	rubricFile := flags.String("rubric-file", "", "append user rubric guidance from this file")
+	repetitions := flags.Int("repetitions", 1, "observations per case")
+	timeoutMS := flags.Int("timeout-ms", 1000, "TypeSafe observation deadline")
+	endpoint := flags.String("endpoint", "", "TypeSafe endpoint override")
+	apiKeyEnv := flags.String("api-key-env", typesafe.APIKeyEnv, "environment variable holding the TypeSafe key")
+	maxCases := flags.Int("max-cases", 0, "stop after this many scored cases (0 = all)")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	cases, err := corpus.Load(*corpusPath)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "calibrate: %v\n", err)
+		return 2
+	}
+	systemPrompt, err := gate.LoadRubricPrompt(*rubricFile)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "calibrate: %v\n", err)
+		return 3
+	}
+	apiKey := os.Getenv(*apiKeyEnv)
+	if strings.TrimSpace(apiKey) == "" {
+		_, _ = fmt.Fprintf(stderr, "calibrate: %s is not set; this is a live TypeSafe run\n", *apiKeyEnv)
+		return 3
+	}
+	client := typesafe.New(apiKey, *model, time.Duration(*timeoutMS)*time.Millisecond, systemPrompt)
+	if *endpoint != "" {
+		client.Endpoint = *endpoint
+	}
+	identity := typesafe.IdentityFor(*model, systemPrompt)
+	report := calibrate.Run(context.Background(), cases, client, identity, calibrate.Config{
+		Repetitions: *repetitions,
+		Cutoff:      typesafe.Cutoff,
+		MaxCases:    *maxCases,
+	})
+
+	writer := stdout
+	var file *os.File
+	if *reportPath != "" {
+		file, err = os.Create(*reportPath)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "calibrate: %v\n", err)
+			return 2
+		}
+		defer func() { _ = file.Close() }()
+		writer = file
+	}
+	if code := encodeIndent(writer, report); code != 0 {
+		return code
+	}
+	_, _ = fmt.Fprintf(stderr,
+		"calibration identity=%s corpus=%s cases=%d scored=%d observations=%d unsafe=%d high_risk=%d failures=%d observational_any=%d/%d p50=%.0fms p95=%.0fms passes=%t\n",
+		identity.ID, *corpusPath, report.Cases, report.Scored, report.Observations,
+		report.UnsafeApprovals, report.HighRiskApprovals, report.Failures,
+		report.ObservationalAny, report.ObservationalCases, report.LatencyP50MS, report.LatencyP95MS, report.Passes)
+	if !report.Passes {
+		return 1
+	}
+	return 0
+}
+
 func runCorpus(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("corpus", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	path := flags.String("corpus", "", "JSONL corpus path")
 	reportPath := flags.String("report", "", "write the JSON report here (default stdout)")
-	providerName := flags.String("provider", "fake", "fake or record")
+	providerName := flags.String("provider", "fake", "fake, record, or live")
 	recordPath := flags.String("record", "", "JSONL recorded provider outcomes")
+	recordOut := flags.String("record-out", "", "write live provider outcomes as JSONL")
+	descriptorPath := flags.String("descriptor-file", "", "JSON file with models and config, as in an init frame")
+	modelName := flags.String("model", "", "descriptor name to use")
+	baseURL := flags.String("base-url", "", "endpoint base URL for a direct live run")
+	apiType := flags.String("api-type", "chat_completions", "chat_completions or responses")
+	modelID := flags.String("model-name", "", "model name for a direct live run")
+	apiKeyEnv := flags.String("api-key-env", "", "environment variable holding the API key")
+	rubricFile := flags.String("rubric-file", "", "append user rubric guidance from this file")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	if *path == "" {
 		_, _ = fmt.Fprintln(stderr, "corpus: --corpus is required")
+		return 2
+	}
+	if *recordOut != "" && *providerName != "live" {
+		_, _ = fmt.Fprintln(stderr, "corpus: --record-out requires --provider live")
 		return 2
 	}
 	cases, err := corpus.Load(*path)
@@ -315,10 +446,12 @@ func runCorpus(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "corpus: %v\n", err)
 		return 2
 	}
-	var p provider.Provider
+	var client *judge.Client
+	useExpected := false
 	switch *providerName {
 	case "fake":
-		p = &provider.Fake{}
+		client = judge.New(&provider.Fake{}, gate.DefaultDescriptor("offline-corpus"), 30*time.Second, 0)
+		useExpected = true
 	case "record":
 		if *recordPath == "" {
 			_, _ = fmt.Fprintln(stderr, "corpus: --record is required with --provider record")
@@ -329,29 +462,52 @@ func runCorpus(args []string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintf(stderr, "corpus: %v\n", err)
 			return 2
 		}
-		p = recorder
+		client = judge.New(recorder, gate.DefaultDescriptor("offline-corpus"), 30*time.Second, 0)
+	case "live":
+		init, err := liveInit(*descriptorPath, *modelName, *baseURL, *apiType, *modelID, *apiKeyEnv, *rubricFile)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "corpus: %v\n", err)
+			return 3
+		}
+		engine, err := gate.BuildWith(init, gate.Dependencies{})
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "corpus: %v\n", err)
+			return 3
+		}
+		client = engine.Judge
+		if *recordOut != "" {
+			file, err := os.Create(*recordOut)
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "corpus: %v\n", err)
+				return 2
+			}
+			defer func() { _ = file.Close() }()
+			client.Provider = provider.NewRecorder(client.Provider, file)
+		}
+		_, _ = fmt.Fprintln(stderr, "corpus: live provider; this run spends provider quota")
 	default:
-		_, _ = fmt.Fprintf(stderr, "corpus: unknown provider %q (use fake or record)\n", *providerName)
+		_, _ = fmt.Fprintf(stderr, "corpus: unknown provider %q (use fake, record, or live)\n", *providerName)
 		return 2
 	}
 
-	client := judge.New(p, gate.DefaultDescriptor("offline-corpus"), 30*time.Second, 0)
 	confidence := 0.99
-	evaluator := func(c corpus.Case) (judge.Verdict, error) {
+	evaluator := func(c corpus.Case) (judge.Verdict, []judge.Attempt, error) {
 		request := judge.Request{
 			Command:    c.Command,
 			Cwd:        c.Cwd,
 			Reason:     c.Reason,
 			RepoDigest: c.RepoDigest,
-			Expected: &provider.Expected{
+		}
+		if useExpected {
+			request.Expected = &provider.Expected{
 				Decision:   c.ExpectedDecision,
 				Code:       c.ExpectedCode,
 				Message:    "offline corpus label",
 				Confidence: &confidence,
-			},
+			}
 		}
-		verdict, _, err := client.Evaluate(context.Background(), request)
-		return verdict, err
+		verdict, attempts, err := client.Evaluate(context.Background(), request)
+		return verdict, attempts, err
 	}
 
 	report := corpus.Run(cases, evaluator, *path, *providerName, fingerprint)
@@ -382,6 +538,130 @@ func runCorpus(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func runCompare(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("compare", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	baselinePath := flags.String("baseline", "", "baseline corpus report")
+	candidatePath := flags.String("candidate", "", "candidate corpus report")
+	reportPath := flags.String("report", "", "write the JSON comparison here (default stdout)")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *baselinePath == "" || *candidatePath == "" {
+		_, _ = fmt.Fprintln(stderr, "compare: --baseline and --candidate are required")
+		return 2
+	}
+	baseline, err := loadReport(*baselinePath)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "compare: %v\n", err)
+		return 2
+	}
+	candidate, err := loadReport(*candidatePath)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "compare: %v\n", err)
+		return 2
+	}
+	comparison := corpus.Compare(baseline, candidate)
+	writer := stdout
+	var file *os.File
+	if *reportPath != "" {
+		file, err = os.Create(*reportPath)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "compare: %v\n", err)
+			return 2
+		}
+		defer func() { _ = file.Close() }()
+		writer = file
+	}
+	if code := encodeIndent(writer, comparison); code != 0 {
+		return code
+	}
+	_, _ = fmt.Fprintf(stderr,
+		"compare baseline=%s candidate=%s compared=%d agreement=%d missing=%d corpus_mismatch=%t code_changes=%d unsafe=%d errors=%d passes=%t\n",
+		*baselinePath, *candidatePath, comparison.Compared, comparison.Agreement,
+		comparison.Missing, comparison.CorpusMismatch, comparison.CodeChanges,
+		len(comparison.UnsafeDivergences), comparison.CandidateErrors, comparison.Passes)
+	if !comparison.Passes {
+		for _, divergence := range comparison.UnsafeDivergences {
+			_, _ = fmt.Fprintf(stderr, "UNSAFE line=%d command=%q baseline=%s/%s candidate=%s/%s\n",
+				divergence.Line, divergence.Command, divergence.BaselineDecision,
+				divergence.BaselineCode, divergence.CandidateDecision, divergence.CandidateCode)
+		}
+		return 1
+	}
+	return 0
+}
+
+func loadReport(path string) (corpus.Report, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return corpus.Report{}, err
+	}
+	var report corpus.Report
+	if err := json.Unmarshal(raw, &report); err != nil {
+		return corpus.Report{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return report, nil
+}
+
+func liveInit(descriptorPath, modelName, baseURL, apiType, modelID, apiKeyEnv, rubricFile string) (protocol.InitFrame, error) {
+	init := protocol.InitFrame{
+		Protocol: protocol.Version,
+		Type:     "init",
+		ID:       "init",
+		Session:  protocol.InitSession{Cwd: "."},
+	}
+	switch {
+	case descriptorPath != "":
+		raw, err := os.ReadFile(descriptorPath)
+		if err != nil {
+			return init, err
+		}
+		var file descriptorFile
+		if err := json.Unmarshal(raw, &file); err != nil {
+			return init, fmt.Errorf("descriptor file: %w", err)
+		}
+		init.Models = file.Models
+		config := map[string]any{}
+		if len(file.Config) > 0 {
+			if err := json.Unmarshal(file.Config, &config); err != nil {
+				return init, fmt.Errorf("descriptor file config: %w", err)
+			}
+		}
+		if rubricFile != "" {
+			config["rubric_file"] = rubricFile
+		}
+		if modelName != "" {
+			config["model"] = modelName
+		}
+		if len(config) > 0 {
+			init.Config = mustJSON(config)
+		} else {
+			init.Config = file.Config
+		}
+	case baseURL != "":
+		if modelID == "" {
+			return init, fmt.Errorf("--model-name is required with --base-url")
+		}
+		endpoint := map[string]any{
+			"base_url": baseURL,
+			"api_type": apiType,
+			"model":    modelID,
+		}
+		if apiKeyEnv != "" {
+			endpoint["api_key_env"] = apiKeyEnv
+		}
+		config := map[string]any{"endpoint": endpoint}
+		if rubricFile != "" {
+			config["rubric_file"] = rubricFile
+		}
+		init.Config = mustJSON(config)
+	default:
+		return init, fmt.Errorf("live provider requires --descriptor-file or --base-url")
+	}
+	return init, nil
 }
 
 func mustJSON(value any) json.RawMessage {

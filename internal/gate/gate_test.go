@@ -196,13 +196,17 @@ func typesafeServer(t *testing.T, body string, status int) *httptest.Server {
 }
 
 func typesafeInit(endpoint, mode string) protocol.InitFrame {
+	return typesafeInitModel(endpoint, mode, "jev-1.13.0")
+}
+
+func typesafeInitModel(endpoint, mode, model string) protocol.InitFrame {
 	return offlineInit(`{"endpoint":{"base_url":"offline://fake","api_type":"chat_completions","model":"offline"},"typesafe":{"mode":"` +
-		mode + `","model":"jev-test","timeout_ms":1000,"endpoint":"` + endpoint + `"}}`)
+		mode + `","model":"` + model + `","timeout_ms":1000,"endpoint":"` + endpoint + `"}}`)
 }
 
 func TestEvaluateTypeSafeCascade(t *testing.T) {
 	t.Setenv("TYPESAFE_AI_API_KEY", "key")
-	server := typesafeServer(t, `{"model":"jev-test","answers":{"eligible":{"type":"noul","noul":0.91}}}`, http.StatusOK)
+	server := typesafeServer(t, `{"model":"jev-1.13.0","answers":{"eligible":{"type":"noul","noul":0.91}}}`, http.StatusOK)
 	defer server.Close()
 	engine, err := BuildWith(typesafeInit(server.URL, "cascade"),
 		Dependencies{Provider: &provider.Fake{Decision: "block", Code: "unknown-destructive"}})
@@ -224,9 +228,42 @@ func TestEvaluateTypeSafeCascade(t *testing.T) {
 	}
 }
 
-func TestEvaluateTypeSafeShadowFallsThrough(t *testing.T) {
+func TestEvaluateTypeSafeCascadeUnrecordedDowngrades(t *testing.T) {
 	t.Setenv("TYPESAFE_AI_API_KEY", "key")
 	server := typesafeServer(t, `{"model":"jev-test","answers":{"eligible":{"type":"noul","noul":0.91}}}`, http.StatusOK)
+	defer server.Close()
+	engine, err := BuildWith(typesafeInitModel(server.URL, "cascade", "jev-test"),
+		Dependencies{Provider: &provider.Fake{Decision: "block", Code: "unknown-destructive"}})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if engine.TypesafeMode != "shadow" {
+		t.Fatalf("typesafe mode = %q, want shadow", engine.TypesafeMode)
+	}
+	if engine.TypesafeRecord != nil {
+		t.Fatal("unrecorded identity armed a calibration record")
+	}
+	found := false
+	for _, warning := range engine.Warnings {
+		if strings.Contains(warning, "calibration identity") && strings.Contains(warning, "not recorded") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing downgrade warning: %+v", engine.Warnings)
+	}
+	decision, failure := engine.Evaluate(context.Background(), checkFrame("c1", "git status"))
+	if failure != nil {
+		t.Fatalf("failure: %+v", failure)
+	}
+	if decision.Decision != "block" || decision.ShortCircuit {
+		t.Fatalf("decision = %+v, want judge block without short circuit", decision)
+	}
+}
+
+func TestEvaluateTypeSafeShadowFallsThrough(t *testing.T) {
+	t.Setenv("TYPESAFE_AI_API_KEY", "key")
+	server := typesafeServer(t, `{"model":"jev-1.13.0","answers":{"eligible":{"type":"noul","noul":0.91}}}`, http.StatusOK)
 	defer server.Close()
 	engine, err := BuildWith(typesafeInit(server.URL, "shadow"),
 		Dependencies{Provider: &provider.Fake{Decision: "block", Code: "unknown-destructive"}})
