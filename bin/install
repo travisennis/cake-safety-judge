@@ -13,4 +13,4 @@ echo "installed $target/cake-safety-judge"
 if ! command -v cake-safety-judge >/dev/null 2>&1; then
     echo "warning: $target is not on PATH; Cake cannot select the gate by name" >&2
 fi
-"$root/bin/doctor"
+"$root/bin/doctor" "$target/cake-safety-judge"

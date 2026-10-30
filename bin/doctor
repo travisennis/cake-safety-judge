@@ -3,7 +3,10 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-if [ -x "$root/bin/cake-safety-judge" ]; then
+if [ "$#" -gt 0 ]; then
+    path=$1
+    echo "binary: $path (explicit)"
+elif [ -x "$root/bin/cake-safety-judge" ]; then
     path="$root/bin/cake-safety-judge"
     echo "binary: $path (local build; Cake uses the PATH copy when installed)"
 elif command -v cake-safety-judge >/dev/null 2>&1; then
