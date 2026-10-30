@@ -18,7 +18,17 @@ latency/usage plumbing, and framing. It is **not** model parity.
 ## Recorded / live comparison
 
 A live run spends provider quota. Use a descriptor file that Cake already
-resolves, or a direct endpoint:
+resolves, or a direct endpoint. To build a descriptor from Cake's resolved
+models, select the same model the gate settings use (do not pass `--model` to
+Cake):
+
+```sh
+cake debug models --json |
+  jq '{models: (.data.models | map({key: .name, value: .}) | from_entries),
+       config: {model: "deepseek-flash-none"}}' > /tmp/judge-descriptor.json
+```
+
+Then:
 
 ```sh
 # Live judge over a corpus; capture each provider outcome for replay.

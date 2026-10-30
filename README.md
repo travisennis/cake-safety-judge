@@ -7,11 +7,11 @@ recovery, the stable verdict-code vocabulary, and the optional TypeSafe
 cascade.
 
 Status: Cake's in-process judge has been deleted; this gate is the only
-production `bash.exec` policy path. The gate is built, installed, and green on
-the offline suite, but it is not enabled in Trav's live settings yet. Prompt
-hardening, egress coverage, TypeSafe calibration, and the recorded/live
-comparison harness are in place; quality measurement and enablement remain
-open.
+production `bash.exec` policy path. The gate is built and green on the offline
+suite; `just install` puts it on PATH. It is not enabled in Trav's live
+settings yet. Prompt hardening, egress coverage, TypeSafe calibration, and the
+recorded/live comparison harness are in place; quality measurement and
+enablement remain open.
 
 The repository is public at <https://github.com/travisennis/cake-safety-judge>.
 

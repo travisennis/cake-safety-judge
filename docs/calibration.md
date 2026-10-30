@@ -84,3 +84,8 @@ The report records per-case probabilities, unsafe approvals (any repetition at
 or above the cutoff on a blocked case), high-risk approvals, observational
 coverage, the recommended cutoff, latency, and token usage. A live run requires
 `TYPESAFE_AI_API_KEY` and explicit authorization.
+
+A calibration report is evidence, not an automatic trust grant. To arm cascade
+for a new identity, add a `Record` to `internal/typesafe/calibration.go` with the
+report's identity and counts, review that change, rebuild, and verify with
+`cake-safety-judge calibration --require-recorded`.
